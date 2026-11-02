@@ -348,3 +348,42 @@ fn a_popup_leaves_the_game_running_closes_on_its_button_and_by_itself() {
     ui.notify(200, b"", Buttons::OK);
     assert!(!shown(&ui, 100) && shown(&ui, 200));
 }
+
+/// The shape of `ui/confirml.lyt` (45100), the tutorial's dialog: the layout says `dy=300` while
+/// its background picture is 349 tall and its buttons sit at `y=315`, 15 pixels below the
+/// rectangle the layout declares. The original game hits them anyway, so a question must answer
+/// its button wherever the button draws, not only inside the layout's own rectangle.
+#[test]
+fn a_question_answers_a_button_that_draws_below_its_layout() {
+    let root = "[LayoutInfo]\nid=1\nx=0\ny=0\ndx=whole\ndy=whole\n\
+        [a]\ntype=UILayout\nlayout=ui/q45100.lyt\n";
+    // x=center y=center dx=500 dy=300, the background 500 x 349, the OK button at (185, 315).
+    let question = "[LayoutInfo]\nid=45100\nlayer=7\nx=center\ny=center\ndx=500\ndy=300\nstate=1\n\
+        [a]\ntype=UIImage\nid=45101\nx=0\ny=0\ndx=500\ndy=349\nalias=-1\ntransparent=0\n\
+        [b]\ntype=UIText\nid=45106\nx=165\ny=30\ndx=309\ndy=272\n\
+        [c]\ntype=UIButton\nid=45112\nx=185\ny=315\ndx=119\ndy=27\ntransparent=0\n\
+        action=5\ntarget=1\n";
+    let install = Install::new(
+        "dialog-confirml",
+        &[
+            ("ui/root.lyt", root.as_bytes().to_vec()),
+            ("ui/q45100.lyt", question.as_bytes().to_vec()),
+        ],
+    );
+    let mut tree = Tree::load(&Vfs::open(&install.0).unwrap(), "ui/root.lyt", 0);
+    assert_eq!(tree.failure, None);
+    tree.resolve(1600, 900, |_| 12);
+    let mut ui = Interface::new(tree, Box::new(NoTexts));
+    ui.show(1);
+    assert!(ui.ask(45100, b"Sure?", Buttons::OK));
+    assert!(ui.modal_open());
+    // The layout is centred: (1600 - 500) / 2, (900 - 300) / 2. Its button is 15 pixels below it.
+    assert_eq!(rect(&ui, 45100), (550, 300, 500, 300));
+    assert_eq!(rect(&ui, 45112), (735, 615, 119, 27));
+    ui.take_events();
+    click(&mut ui, 735 + 59, 615 + 13);
+    // The button is pressed, released inside it, and the question is answered with its target.
+    let events = ui.take_events();
+    assert!(events.contains(&"answer 1".to_string()), "{events:?}");
+    assert!(!ui.modal_open() && !shown(&ui, 45100));
+}

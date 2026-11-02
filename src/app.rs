@@ -1961,6 +1961,7 @@ impl<'a> App<'a> {
                         game.animal.clock.force = true;
                     }
                 }
+                t if camera::is_camera_button(t) => self.camera_pressed(t),
                 _ if self.game.is_some() => self.build(Some(id)),
                 _ if self.game.is_none() => {
                     if let (Some(ui), Some(menu)) = (&mut self.ui, &mut self.menu) {
@@ -1977,6 +1978,7 @@ impl<'a> App<'a> {
         if let Some(ui) = &mut self.ui {
             self.ui_events.extend(ui.take_events());
         }
+        self.camera_sync();
     }
 
     /// The building panels notice what the player did to them: the panel shown or hidden, and
@@ -2722,6 +2724,7 @@ pub fn frame_hash(frame: &Framebuffer) -> u64 {
 mod adopt;
 mod building_panel;
 mod bulldozer;
+mod camera;
 mod carry;
 mod cheat;
 mod cheat_guest;
@@ -2743,6 +2746,8 @@ mod undo;
 
 #[cfg(test)]
 mod adopt_tests;
+#[cfg(test)]
+mod camera_tests;
 #[cfg(test)]
 mod tank_panel_tests;
 

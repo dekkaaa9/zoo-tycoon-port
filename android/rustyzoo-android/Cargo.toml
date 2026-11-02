@@ -1,0 +1,20 @@
+[package]
+name = "rustyzoo-android"
+version = "0.0.0"
+edition = "2024"
+description = "The Android shell of RustyZoo: an SDL3 cdylib that runs the core"
+license = "GPL-3.0-or-later"
+
+# A shared library, not an executable: SDLActivity loads it and calls SDL_main on its own thread.
+[lib]
+name = "rustyzoo"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustyzoo = { path = "../.." }
+# `main` pulls in the SDL_main shim that Android needs; the rest matches the desktop build.
+sdl3 = { version = "0.20", features = [
+    "build-from-source-static",
+    "build-from-source-unix-console",
+    "main",
+] }

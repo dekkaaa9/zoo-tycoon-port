@@ -88,11 +88,21 @@ impl Interface {
     }
 
     fn hit_in(&mut self, layout: usize, at: (i32, i32)) -> Option<usize> {
-        let e = self.tree.elements.get(layout)?;
-        if e.state & (HIDDEN | NEVER_SHOWN) != 0 || !inside(self.tree.rect(layout), at) {
+        let Some(e) = self.tree.elements.get(layout) else {
+            return None;
+        };
+        // A layout that is not there holds nothing that can be hit.
+        if e.state & (HIDDEN | NEVER_SHOWN) != 0 {
             return None;
         }
-        for child in e.children.clone().into_iter().rev() {
+        // The rectangle of the layout is not the test, only its being there is: a layout can
+        // declare less room than its content takes -- ui/confirml.lyt gives itself 300 pixels
+        // and puts its buttons at 315, 15 below its own edge -- and the original game answers a
+        // button wherever it draws. Every widget is tested on its own rectangle below, which is
+        // the precise test, so the layout's rectangle would only ever wrongly refuse a hit.
+        let count = e.children.len();
+        for k in (0..count).rev() {
+            let child = self.tree.elements[layout].children[k];
             let hit = match self.tree.elements[child].kind {
                 Kind::Layout => self.hit_in(child, at),
                 _ => self.widget_hit(child, at).then_some(child),
