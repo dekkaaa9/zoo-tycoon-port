@@ -1,0 +1,1704 @@
+//! Starting a game from the menu and leaving it again, on a made-up interface and a made-up map.
+
+use super::*;
+use crate::config::Config;
+use crate::entity::Catalogue;
+use crate::menu::{Menu, Start};
+use crate::money::Money;
+use crate::render::tests::{cache_install, cache_install_with, frame_file};
+use crate::sprite::tests::Install;
+use crate::ui::draw::Strings as UiStrings;
+use crate::ui::layout::{DISABLED, HIDDEN, Tree};
+use crate::vfs::Vfs;
+use crate::zoo::{Common, Zoo};
+
+pub(super) const SIZE: (u32, u32) = (64, 48);
+
+struct Texts;
+
+impl UiStrings for Texts {
+    fn string(&self, id: i32) -> String {
+        match id {
+            9101 => "text-9101 %d".into(),
+            9201 => "told %r".into(),
+            9301 => "gift %s".into(),
+            9401 => "won %r".into(),
+            29001 => "Gold".into(),
+            9102 => "hint %d %r".into(),
+            5 => "lion".into(),
+            1 | 2 => format!("branch-{id}"),
+            4001 => "status".into(),
+            23020 => "done %r".into(),
+            23021 => "all %s".into(),
+            23030 => "Unfunded".into(),
+            23031 => "no-program".into(),
+            23032 => "no-category".into(),
+            23103 => "%s top".into(),
+            23400..=23499 => format!("p{id}"),
+            151 | 153 | 318 | 11645 | 11646 | 9001 | 16100 | 16101 => format!("text-{id}"),
+            _ => String::new(),
+        }
+    }
+
+    fn text_entry(&self, name: &[u8]) -> Vec<u8> {
+        match name {
+            b"SCN_STORY" => b"text-story".to_vec(),
+            b"AWD_SEVEN" => b"seven won".to_vec(),
+            b"AWD_NINE" => b"nine won".to_vec(),
+            _ => vec![],
+        }
+    }
+}
+
+/// The main menu (layout 26) with Exit (7116, at the top left) and Continue (7113, at 20, 0), a
+/// question (45000, its message 45006 and the buttons Yes, No, OK and Cancel at 0, 10, 20 and 30
+/// of its top), the name dialog (45300: message 45306, field 45308, OK 45312 and Cancel 45313), the
+/// list of saved games (layout 39: title 11503, list 11504, Load 11513, Back 11514) and, hidden, the
+/// options panel (5) with Load Game (1501), Save Game (1502), Main Menu (1503) and Exit Game (1504).
+pub(super) fn interface(install: &Install) -> Interface {
+    let root = "[LayoutInfo]\nid=1\nx=0\ny=0\ndx=whole\ndy=whole\n\
+        [a]\ntype=ZTMapView\nid=7000\ndx=whole\ndy=whole\ntransparent=0\n\
+        [mq]\ntype=ZTMessageQueue\nid=7001\nx=0\ny=0\ndx=40\ndy=8\n\
+        [b]\ntype=UILayout\nlayout=ui/menu.lyt\n\
+        [c]\ntype=UILayout\nlayout=ui/q.lyt\n\
+        [d]\ntype=UILayout\nlayout=ui/options.lyt\n\
+        [n]\ntype=UILayout\nlayout=ui/name.lyt\n\
+        [l]\ntype=UILayout\nlayout=ui/list.lyt\n\
+        [e]\ntype=UILayout\nlayout=ui/panel.lyt\n\
+        [h]\ntype=UILayout\nlayout=ui/hint.lyt\n\
+        [w]\ntype=UILayout\nlayout=ui/end.lyt\n\
+        [o]\ntype=UILayout\nlayout=ui/obj.lyt\n\
+        [r]\ntype=UILayout\nlayout=ui/res.lyt\n\
+        [x]\ntype=UILayout\nlayout=ui/sel.lyt\n";
+    let button = "type=UIButton\ndx=10\ndy=10\ncolorasicon=1\n";
+    let menu = format!(
+        "[LayoutInfo]\nid=26\nlayer=2\nx=0\ny=0\ndx=whole\ndy=whole\nstate=1\n\
+         [x]\nid=7116\nx=0\ny=0\n{button}[y]\nid=7113\nx=20\ny=0\n{button}\
+         [z]\nid=7112\nx=40\ny=0\n{button}"
+    );
+    let q = format!(
+        "[LayoutInfo]\nid=45000\nlayer=7\nx=0\ny=0\ndx=40\ndy=10\nstate=1\n\
+         [m]\ntype=UIText\nid=45006\nx=0\ny=0\ndx=40\ndy=10\n\
+         [a]\nid=45010\nx=0\ny=0\ntarget=6\naction=5\n{button}\
+         [b]\nid=45011\nx=10\ny=0\ntarget=7\naction=5\n{button}\
+         [c]\nid=45012\nx=20\ny=0\ntarget=1\naction=5\n{button}\
+         [d]\nid=45013\nx=30\ny=0\ntarget=2\naction=5\n{button}\
+         [i]\ntype=UIImage\nid=45004\nx=0\ny=0\nlayer=1\n\
+         [g]\ntype=UIImage\nid=45002\nx=0\ny=0\nlayer=1\n"
+    );
+    let options = format!(
+        "[LayoutInfo]\nid=5\nlayer=3\nx=40\ny=20\ndx=20\ndy=20\nstate=1\n\
+         [a]\nid=1503\nx=0\ny=0\n{button}[b]\nid=1504\nx=10\ny=10\n{button}\
+         [c]\nid=1501\nx=10\ny=0\n{button}[d]\nid=1502\nx=0\ny=10\n{button}"
+    );
+    let name = format!(
+        "[LayoutInfo]\nid=45300\nlayer=7\nx=0\ny=0\ndx=40\ndy=26\nstate=1\n\
+         [m]\ntype=UIText\nid=45306\nx=0\ny=0\ndx=40\ndy=8\n\
+         [f]\ntype=UIEditableText\nid=45308\nx=0\ny=8\ndx=40\ndy=8\n\
+         [o]\nid=45312\nx=0\ny=16\ntarget=1\naction=5\n{button}\
+         [c]\nid=45313\nx=10\ny=16\ntarget=2\naction=5\n{button}"
+    );
+    let list = format!(
+        "[LayoutInfo]\nid=39\nlayer=3\nx=0\ny=0\ndx=whole\ndy=whole\nstate=1\n\
+         [t]\ntype=UIText\nid=11503\nx=0\ny=0\ndx=40\ndy=10\n\
+         [l]\ntype=UIListBox\nid=11504\nx=0\ny=12\ndx=40\ndy=36\nhandledoubleclicks=1\n\
+         state=131072\nborder=0\n\
+         [p]\nid=11513\nx=44\ny=12\n{button}\
+         [b]\nid=11514\nx=44\ny=24\naction=2\ntarget=-1\n{button}"
+    );
+    let made = Install::new(
+        &format!(
+            "start-ui-{}",
+            install.0.file_name().unwrap().to_string_lossy()
+        ),
+        &[
+            ("ui/root.lyt", root.as_bytes().to_vec()),
+            ("ui/menu.lyt", menu.into_bytes()),
+            ("ui/q.lyt", q.into_bytes()),
+            ("ui/options.lyt", options.into_bytes()),
+            ("ui/name.lyt", name.into_bytes()),
+            ("ui/list.lyt", list.into_bytes()),
+            (
+                "ui/panel.lyt",
+                b"[LayoutInfo]\nid=2\nlayer=1\nx=0\ny=40\ndx=64\ndy=8\nstate=1\n\
+                  [a]\ntype=UIButton\nid=2001\nx=0\ny=0\ndx=8\ndy=8\ncolorasicon=1\n\
+                  [b]\ntype=UIButton\nid=2002\nx=10\ny=0\ndx=8\ndy=8\ncolorasicon=1\n\
+                  [c]\ntype=UIButton\nid=4107\nx=20\ny=0\ndx=8\ndy=8\ncolorasicon=1\n\
+                  action=3\ntarget=803\n\
+                  [r]\ntype=UIButton\nid=1019\nx=30\ny=0\ndx=8\ndy=8\ncolorasicon=1\nstate=2048\n\
+                  action=3\ntarget=15\n"
+                    .to_vec(),
+            ),
+            (
+                "ui/hint.lyt",
+                b"[LayoutInfo]\nid=45400\nlayer=7\nx=0\ny=0\ndx=40\ndy=8\nstate=1\n\
+                  [a]\ntype=UIButton\nid=45406\nx=0\ny=0\ndx=40\ndy=8\ncolorasicon=1\n"
+                    .to_vec(),
+            ),
+            (
+                "ui/end.lyt",
+                b"[LayoutInfo]\nid=45200\nlayer=7\nx=0\ny=0\ndx=40\ndy=10\nstate=1\n\
+                  [m]\ntype=UIText\nid=45206\nx=0\ny=0\ndx=40\ndy=10\n\
+                  [p]\ntype=UIImage\nid=45204\nx=0\ny=0\n\
+                  [y]\ntype=UIButton\nid=45210\nx=0\ny=0\ndx=10\ndy=10\ncolorasicon=1\n\
+                  target=6\naction=5\n\
+                  [n]\ntype=UIButton\nid=45211\nx=10\ny=0\ndx=10\ndy=10\ncolorasicon=1\n\
+                  target=7\naction=5\n\
+                  [o]\ntype=UIButton\nid=45212\nx=20\ny=0\ndx=10\ndy=10\ncolorasicon=1\n\
+                  target=1\naction=5\n"
+                    .to_vec(),
+            ),
+            (
+                "ui/res.lyt",
+                b"[LayoutInfo]\nid=15\nlayer=1\nx=0\ny=0\ndx=40\ndy=40\nstate=1\n\
+                  [t]\ntype=UIRadioSet\nid=4007\nbutton=4008\nbutton=4009\nbutton=4010\n\
+                  [a]\ntype=UIButton\nid=4008\nx=0\ny=0\ndx=4\ndy=4\nstate=8\nstate=4096\n\
+                  action=3\ntarget=150\n\
+                  [b]\ntype=UIButton\nid=4009\nx=4\ny=0\ndx=4\ndy=4\nstate=4096\n\
+                  action=3\ntarget=151\n\
+                  [c]\ntype=UIButton\nid=4010\nx=8\ny=0\ndx=4\ndy=4\nstate=4096\n\
+                  action=3\ntarget=151\n\
+                  [e]\ntype=UIText\nid=4001\nx=0\ny=20\ndx=10\ndy=4\n\
+                  [s]\ntype=UILayout\nlayout=ui/pg150.lyt\n\
+                  [u]\ntype=UILayout\nlayout=ui/pg151.lyt\n\
+                  [m]\ntype=UIButton\nid=4003\nx=0\ny=4\ndx=4\ndy=4\n\
+                  [p]\ntype=UIButton\nid=4004\nx=4\ny=4\ndx=4\ndy=4\n\
+                  [l]\ntype=UIListBox\nid=4022\nx=0\ny=8\ndx=30\ndy=30\n"
+                    .to_vec(),
+            ),
+            (
+                "ui/sel.lyt",
+                b"[LayoutInfo]\nid=152\nlayer=4\nx=0\ny=0\ndx=20\ndy=20\nstate=1\n\
+                  [l]\ntype=UIListBox\nid=22900\nx=0\ny=0\ndx=20\ndy=20\n"
+                    .to_vec(),
+            ),
+            (
+                "ui/pg150.lyt",
+                b"[LayoutInfo]\nid=150\nlayer=1\nx=0\ny=24\ndx=10\ndy=10\nstate=1\n".to_vec(),
+            ),
+            (
+                "ui/pg151.lyt",
+                b"[LayoutInfo]\nid=151\nlayer=1\nx=0\ny=24\ndx=10\ndy=10\nstate=1\n".to_vec(),
+            ),
+            (
+                "ui/obj.lyt",
+                b"[LayoutInfo]\nid=803\nlayer=1\nx=0\ny=0\ndx=40\ndy=40\nstate=1\n\
+                  [n]\ntype=UIText\nid=4142\nx=0\ny=0\ndx=40\ndy=8\n\
+                  [s]\ntype=UIText\nid=4143\nx=0\ny=8\ndx=40\ndy=8\n\
+                  [l]\ntype=UIListBox\nid=4145\nx=0\ny=16\ndx=40\ndy=24\nborder=0\n"
+                    .to_vec(),
+            ),
+        ],
+    );
+    let mut tree = Tree::load(&Vfs::open(&made.0).unwrap(), "ui/root.lyt", 0);
+    assert_eq!(tree.failure, None);
+    tree.resolve(SIZE.0 as i32, SIZE.1 as i32, |_| 12);
+    Interface::new(tree, Box::new(Texts))
+}
+
+/// The bytes of a map of 2 by 2 tiles.
+pub(super) fn map() -> Vec<u8> {
+    crate::zoo::tests::file(106, 2, 2, &[], &[])
+}
+
+/// Runs `body` on the main menu over a folder that has `saved.zoo` (a good map), `bad.zoo` (not
+/// a map), and the settings `ini`.
+pub(super) fn with_menu(name: &str, ini: &str, body: impl FnOnce(&mut App, &Install)) {
+    with_game(name, ini, &[], None, body);
+}
+
+/// [`with_menu`] with more files in the game's install and, if given, this catalogue.
+pub(super) fn with_game(
+    name: &str,
+    ini: &str,
+    more: &[(&str, Vec<u8>)],
+    catalogue: Option<Catalogue>,
+    body: impl FnOnce(&mut App, &Install),
+) {
+    let files = Install::new(&format!("start-{name}"), &[]);
+    std::fs::write(files.0.join("saved.zoo"), map()).unwrap();
+    std::fs::write(files.0.join("bad.zoo"), b"not a map").unwrap();
+    let ui = interface(&files);
+    let ini = Config::parse(ini.as_bytes()).unwrap();
+    let menu = Menu::new(ini.clone(), &files.0, Some(files.0.join("user")), None, 0);
+    let scn = b"[duration]\nnummonths=-1\n[start]\ntriggers=t\n[t]\ntrulea=2\n\
+        [goals]\ngoal=g\n[g]\nrulea=99\narga=1\nvalue=1\ntrulea=1\n";
+    let ui_scn = b"[duration]\nnummonths=-1\n[start]\ntriggers=off\n\
+        [off]\ntrulea=2\ntruleb=3\ntarga=2001\ntargb=9\n[goals]\ngoal=shown\ngoal=click\n\
+        [shown]\nrulea=10\nruleb=0\narga=2001\nvalue=1\ntrulea=2\ntruleb=0\ntarga=8\n\
+        [click]\nrulea=10\nruleb=1\narga=2002\nvalue=1\ntrulea=2\ntruleb=5\ntarga=2001\n\
+        [9]\nlayout=45300\nshortText1=151\n\
+        [8]\nlayout=45000\nshortText1=153\nmodal=1\nimage1=s/pic.tga\npersistentTextLayout=45400\n\
+        persistentShortText=151\n";
+    // A picture of 2 by 1 pixels.
+    let tga = [
+        0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0x20, 9, 9, 9, 9, 9, 9,
+    ];
+    let goal = |kind: &str| {
+        format!(
+            "[desc]\nname=9001\nstory=SCN_STORY\n[completion]\nunlock=7\n[goals]\ngoal=g\n\
+             [g]\nrulea=99\narga=1\nvalue=1\ntext=9101\n{kind}\n"
+        )
+        .into_bytes()
+    };
+    let extra = [
+        ("s/play.scn", scn.to_vec()),
+        ("s/ui.scn", ui_scn.to_vec()),
+        ("s/pic.tga", tga.to_vec()),
+        ("s/win.scn", goal("")),
+        ("s/lose.scn", goal("type=7")),
+        // Two tutorials: the first has a next one, which has a map to start.
+        ("scenario/scn01a/scn01a.scn", goal("")),
+        (
+            "scenario/scn01/scn01.scn",
+            [goal("").as_slice(), b"[start]\nsavegame=saved.zoo\n"].concat(),
+        ),
+        ("s/res.scn", b"[start]\nresearch=resx.cfg\n".to_vec()),
+        // Unreadable scenarios: empty, or text with no line starting with `[` (7.2); and one header.
+        ("s/empty.scn", Vec::new()),
+        ("s/garbage.scn", b"goal=a\n; [x]\nplain text [y]\n".to_vec()),
+        ("s/header.scn", b"  [x]".to_vec()),
+        // The scenario the test maps name: a saved game of it loads.
+        ("scn/x", b"[start]\n".to_vec()),
+        ("resx.cfg", b"[branches]\nbranch=rb.cfg\n".to_vec()),
+        ("rb.cfg", b"[branch]\nname=1\ncategory=rc.cfg\n".to_vec()),
+        (
+            "rc.cfg",
+            b"[category]\nname=2\nprogram=ra.cfg\nprogram=rd.cfg\n".to_vec(),
+        ),
+        ("ra.cfg", b"[research]\nname=10\ncost=0\n".to_vec()),
+        ("rd.cfg", b"[research]\nname=11\ncost=5\n".to_vec()),
+    ];
+    let extra = [&extra[..], more].concat();
+    let game = cache_install_with(&format!("start-game-{name}"), frame_file(), &extra);
+    let vfs = Vfs::open(&game.0).unwrap();
+    let catalogue = catalogue.unwrap_or_else(|| Catalogue::load(&vfs).unwrap());
+    let mut app = App::menu(
+        MapRenderer::new(&vfs, &catalogue),
+        Settings::default(),
+        Timers::new(66, 16, 200),
+        SIZE,
+        ui,
+        menu,
+        Music::from_config(&ini),
+    )
+    .unwrap();
+    body(&mut app, &files);
+}
+
+pub(super) fn click(x: i32, y: i32) -> [Command; 3] {
+    [
+        Command::Mouse(Mouse::Move(x, y)),
+        Command::Mouse(Mouse::Down),
+        Command::Mouse(Mouse::Up),
+    ]
+}
+
+/// The log lines of a pass that the menu and the game wrote, without the lead.
+pub(super) fn said(app: &App, pass: u64, now: u64) -> Vec<String> {
+    let lead = format!("pass {pass} t={now} ");
+    app.log_lines(pass, now)
+        .iter()
+        .filter_map(|l| l.strip_prefix(&lead))
+        .filter(|l| l.starts_with("menu "))
+        .map(String::from)
+        .collect()
+}
+
+pub(super) fn shown(app: &mut App, id: i32) -> bool {
+    let ui = app.interface().unwrap();
+    ui.tree
+        .find(id)
+        .is_some_and(|i| ui.tree.elements[i].state & HIDDEN == 0)
+}
+
+pub(super) const CONTINUE: [Command; 3] = [
+    Command::Mouse(Mouse::Move(25, 5)),
+    Command::Mouse(Mouse::Down),
+    Command::Mouse(Mouse::Up),
+];
+
+#[test]
+fn continue_opens_the_file_hides_the_menu_fades_the_music_and_runs_with_the_capped_step() {
+    with_menu("continue", "[user]\nlastfile=Saved.ZOO\n", |app, _| {
+        app.pass(0, &[]);
+        assert!(app.camera().is_none());
+        assert!(app.pass(66, &CONTINUE).is_some());
+        let lines = said(app, 1, 66);
+        assert_eq!(
+            lines,
+            [
+                "menu continue Saved.ZOO",
+                "menu game start continue Saved.ZOO"
+            ]
+        );
+        assert!(app.camera().is_some() && !app.paused() && !app.quit());
+        assert!(!shown(app, 26));
+        // The first step is the cap, whatever the clock says; then the ordinary ones.
+        let log = app.log_lines(1, 66);
+        assert!(log.iter().any(|l| l.contains(" step 200 ")), "{log:?}");
+        app.pass(133, &[]);
+        assert!(
+            app.log_lines(2, 133)
+                .iter()
+                .any(|l| l.contains(" step 67 "))
+        );
+        // The music waits five updates, then fades.
+        for pass in 3..9 {
+            app.pass(pass * 66, &[]);
+        }
+        assert!(app.music().is_some_and(|(m, _)| !m.playing()));
+    });
+}
+
+/// Starts the game of `Continue` and runs a few passes; returns the clock.
+pub(super) fn started(app: &mut App) -> u64 {
+    app.pass(0, &[]);
+    app.pass(66, &CONTINUE);
+    assert!(app.camera().is_some());
+    66
+}
+
+pub(super) fn key(key: Key) -> [Command; 1] {
+    [Command::Key(key, false, false)]
+}
+
+#[test]
+fn escape_asks_and_no_stops_the_game_for_the_menu_with_continue_checked_and_the_music_again() {
+    with_menu("escape", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let mut now = started(app);
+        // The music has begun to fade: stopping the game starts it again from the beginning.
+        for _ in 0..9 {
+            now += 66;
+            app.pass(now, &[]);
+        }
+        assert!(app.music().is_some_and(|(m, _)| !m.playing()));
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert_eq!(said(app, 11, now), ["menu game ask leave"]);
+        assert!(app.paused() && app.camera().is_some());
+        assert!(app.interface().unwrap().modal_open());
+        // Cancel, and Yes then Cancel in the save dialog, leave the game as it is.
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert!(app.camera().is_some() && !app.paused());
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        now += 66;
+        app.pass(now, &key(Key::Y));
+        assert_eq!(said(app, 14, now), ["menu game save dialog"]);
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert!(app.camera().is_some() && !app.paused());
+        // No stops it: the menu is back, Continue is checked again, the music restarts.
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        now += 66;
+        app.pass(now, &key(Key::N));
+        assert_eq!(
+            said(app, 17, now),
+            [
+                "menu game stop",
+                "menu continue saved.zoo",
+                "menu music restart"
+            ]
+            .map(|l| l.replace("continue saved.zoo", "continue enabled saved.zoo"))
+        );
+        assert!(app.camera().is_none() && app.calendar().is_none() && !app.quit());
+        assert!(shown(app, 26) && !app.paused());
+        assert!(app.music().is_some_and(|(m, _)| m.playing()) && app.music_restarted());
+        app.pass(now + 66, &[]);
+        assert!(!app.music_restarted(), "once");
+        // And a game can be started again from the menu.
+        app.pass(now + 132, &CONTINUE);
+        assert!(app.camera().is_some() && !shown(app, 26));
+    });
+}
+
+#[test]
+fn exit_after_a_game_was_left_selects_and_exits_once() {
+    with_menu("exit-again", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let mut now = started(app);
+        for command in [key(Key::Escape), key(Key::N)] {
+            now += 66;
+            app.pass(now, &command);
+        }
+        assert!(app.camera().is_none() && shown(app, 26));
+        now += 66;
+        assert!(app.pass(now, &click(5, 5)).is_none());
+        let lines = app.log_lines(9, now);
+        let count = |text: &str| lines.iter().filter(|l| l.ends_with(text)).count();
+        assert_eq!(
+            (count("ui select 7116"), count("menu exit")),
+            (1, 1),
+            "{lines:?}"
+        );
+    });
+}
+
+#[test]
+fn closing_the_window_ends_the_menu_at_once_and_asks_in_a_game() {
+    with_menu("close", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        app.pass(0, &[Command::Close]);
+        assert!(app.quit(), "the menu ends at once");
+    });
+    with_menu("close-game", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let mut now = started(app);
+        now += 66;
+        app.pass(now, &[Command::Close]);
+        assert_eq!(said(app, 2, now), ["menu game ask exit"]);
+        assert!(!app.quit() && app.paused());
+        // A second close answers the question with Cancel and asks again.
+        now += 66;
+        app.pass(now, &[Command::Close]);
+        assert_eq!(said(app, 3, now), ["menu game ask exit"]);
+        assert!(!app.quit() && app.interface().unwrap().modal_open());
+        // Cancel stays, No ends, and a quit command ends at once.
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert!(!app.quit() && !app.interface().unwrap().modal_open());
+        now += 66;
+        app.pass(now, &[Command::Close]);
+        now += 66;
+        app.pass(now, &key(Key::N));
+        assert!(app.quit());
+        assert!(said(app, 6, now).contains(&"menu game exit".to_string()));
+    });
+    with_menu("quit", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let now = started(app);
+        app.pass(now + 66, &[Command::Quit]);
+        assert!(app.quit(), "a script's quit is not a question");
+    });
+}
+
+#[test]
+fn the_options_panel_buttons_ask_the_same_questions() {
+    with_menu("options", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let mut now = started(app);
+        // The Main Menu button (1503, at 40, 20 of the window) and Exit Game (1504, at 50, 30).
+        app.interface().unwrap().show(5);
+        now += 66;
+        app.pass(now, &click(42, 22));
+        assert_eq!(said(app, 2, now), ["menu game ask leave"]);
+        now += 66;
+        app.pass(now, &key(Key::N));
+        assert!(
+            app.camera().is_none() && !shown(app, 5),
+            "the panel is hidden"
+        );
+        now += 66;
+        app.pass(now, &CONTINUE);
+        app.interface().unwrap().show(5);
+        now += 66;
+        app.pass(now, &click(52, 32));
+        assert_eq!(said(app, 5, now), ["menu game ask exit"]);
+        now += 66;
+        app.pass(now, &key(Key::N));
+        assert!(app.quit());
+    });
+}
+
+#[test]
+fn escape_closes_an_open_panel_before_it_asks_and_does_nothing_in_the_menu() {
+    with_menu("panel", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        app.pass(0, &key(Key::Escape));
+        assert!(
+            !app.interface().unwrap().modal_open(),
+            "no game, no question"
+        );
+        let mut now = started(app);
+        app.interface().unwrap().show(5);
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert!(!shown(app, 5) && !app.interface().unwrap().modal_open());
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert!(app.interface().unwrap().modal_open());
+    });
+}
+
+#[test]
+fn a_file_that_will_not_load_is_a_message_and_the_menu_stays() {
+    with_menu("bad", "[user]\nlastfile=bad.zoo\n", |app, _| {
+        app.pass(0, &[]);
+        app.pass(66, &CONTINUE);
+        assert_eq!(
+            said(app, 1, 66),
+            [
+                "menu continue bad.zoo",
+                "menu message bad.zoo: not a saved game"
+            ]
+        );
+        assert!(app.camera().is_none() && shown(app, 26) && !app.quit());
+        assert!(
+            app.interface().unwrap().modal_open(),
+            "the message is a box"
+        );
+        // OK closes it, and a good file can still be started afterwards.
+        app.pass(132, &key(Key::Enter));
+        assert!(!app.interface().unwrap().modal_open());
+    });
+    with_menu("gone", "[user]\nlastfile=saved.zoo\n", |app, files| {
+        app.pass(0, &[]);
+        std::fs::remove_file(files.0.join("saved.zoo")).unwrap();
+        app.pass(66, &CONTINUE);
+        assert_eq!(
+            said(app, 1, 66),
+            ["menu continue saved.zoo", "menu message text-318"]
+        );
+        assert!(app.camera().is_none() && shown(app, 26));
+    });
+}
+
+#[test]
+fn a_run_without_a_menu_leaves_by_ending() {
+    with_menu("nomenu", "", |app, _| {
+        // `run <map>`: a game and its interface, no menu behind it.
+        let game = Zoo::parse(&map()).unwrap();
+        app.menu = None;
+        app.open_game(game, Money::default()).unwrap();
+        app.pass(0, &[]);
+        app.pass(66, &key(Key::Escape));
+        assert!(app.interface().unwrap().modal_open());
+        app.pass(132, &key(Key::N));
+        assert!(app.quit(), "nowhere to go back to");
+    });
+}
+
+#[test]
+fn a_game_without_an_interface_has_no_question_to_ask() {
+    let game = cache_install("start-bare", frame_file());
+    let vfs = Vfs::open(&game.0).unwrap();
+    let catalogue = Catalogue::load(&vfs).unwrap();
+    let mut app = App::new(
+        MapRenderer::new(&vfs, &catalogue),
+        Zoo::parse(&map()).unwrap(),
+        Settings::default(),
+        Timers::new(66, 16, 200),
+        SIZE,
+    )
+    .unwrap();
+    app.pass(0, &key(Key::Escape));
+    assert!(!app.quit() && app.camera().is_some(), "Escape asks nothing");
+    app.pass(66, &[Command::Close]);
+    assert!(app.quit(), "closing ends it");
+}
+
+#[test]
+fn the_main_panel_shows_with_a_started_game_and_goes_with_it_and_escape_does_not_close_it() {
+    with_menu("panel2", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let mut now = started(app);
+        assert!(shown(app, 2) && !shown(app, 26));
+        // Escape asks: the main panel is not a panel it closes.
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        assert_eq!(said(app, 2, now), ["menu game ask leave"]);
+        assert!(shown(app, 2));
+        now += 66;
+        app.pass(now, &key(Key::N));
+        assert!(
+            !shown(app, 2) && shown(app, 26),
+            "the menu is back and the panel gone"
+        );
+        now += 66;
+        app.pass(now, &CONTINUE);
+        assert!(shown(app, 2));
+    });
+    // `run <map>`: the same state, unless the panel is left out.
+    for (bare, panel) in [(false, true), (true, false)] {
+        with_menu(&format!("panel-run-{bare}"), "", |app, files| {
+            app.menu = None;
+            let ui = interface(files);
+            app.set_interface(ui);
+            app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+                .unwrap();
+            if bare {
+                app.bare();
+            }
+            app.start_game(None);
+            assert_eq!(shown(app, 2), panel);
+        });
+    }
+}
+
+#[test]
+fn only_the_first_fade_waits_and_a_freeform_start_counts_one_update_of_the_wait() {
+    with_menu("fade", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        let fade_pass = |app: &App, pass: u64, now: u64| {
+            app.log_lines(pass, now)
+                .iter()
+                .any(|l| l.contains(" music fade "))
+        };
+        // The first start at pass 1: the five updates wait (passes 1 to 5), the fade steps from 6.
+        app.pass(0, &[]);
+        let mut now = 66;
+        app.pass(now, &CONTINUE);
+        let first: Vec<u64> = (2..10)
+            .filter(|&p| {
+                now = 66 * p;
+                app.pass(now, &[]);
+                fade_pass(app, p, now)
+            })
+            .collect();
+        assert_eq!(first, [6, 7, 8, 9]);
+        // Back to the menu and started again: the fade steps from the first update on.
+        now += 66;
+        app.pass(now, &key(Key::Escape));
+        now += 66;
+        app.pass(now, &key(Key::N));
+        now += 66;
+        app.pass(now, &CONTINUE);
+        assert!(fade_pass(app, 13, now), "from the start's own update");
+    });
+    // A freeform start updates the music once with 2000 ms: one wait gone, and a later fade
+    // would not move.
+    with_menu("fade-freeform", "", |app, _| {
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        let start = Start {
+            path: "saved.zoo".into(),
+            label: "freeform".into(),
+            forget_last: false,
+            freeform: true,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: None,
+        };
+        app.begin(&start);
+        let steps: Vec<u64> = (1..8)
+            .filter(|&p| {
+                app.pass(66 * p, &[]);
+                app.log_lines(p, 66 * p)
+                    .iter()
+                    .any(|l| l.contains(" music fade "))
+            })
+            .collect();
+        // Waiting 5, minus the 2000 ms update: updates at passes 1 to 3 wait, 4 begins, 5 steps.
+        assert_eq!(steps, [5, 6, 7]);
+    });
+}
+
+#[test]
+fn a_saved_zoo_starts_on_its_date_and_a_new_game_on_the_first_of_january_2001() {
+    // The test map stores 14 March 2003.
+    with_menu("calendar", "[user]\nlastfile=saved.zoo\n", |app, _| {
+        started(app);
+        let date = app.calendar().unwrap().date();
+        assert_eq!((date.year, date.month, date.day), (2003, 3, 14));
+    });
+    with_menu("calendar-new", "", |app, _| {
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        let date = app.calendar().unwrap().date();
+        assert_eq!((date.year, date.month, date.day), (2003, 3, 14));
+        let start = Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: None,
+        };
+        app.begin(&start);
+        let date = app.calendar().unwrap().date();
+        assert_eq!((date.year, date.month, date.day), (2001, 1, 1));
+    });
+}
+
+#[test]
+fn a_start_with_reset_zeroes_the_upkeep_of_the_filters_and_dates_them_today() {
+    with_menu("filter-reset", "", |app, _| {
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        let filter = crate::zoo::Filter {
+            health: 4,
+            upkeep: [5, 6, 7],
+            built: 1,
+            serviced: 2,
+            months: 9,
+            ..Default::default()
+        };
+        let entity = Entity {
+            class: "filter".into(),
+            type_name: "filter1".into(),
+            subtype: String::new(),
+            body_size: None,
+            common: Some(Common {
+                x: 32,
+                y: 32,
+                filter: Some(filter),
+                ..Default::default()
+            }),
+        };
+        let world = &mut app.game.as_mut().unwrap().world;
+        world.add(entity, None).unwrap();
+        let start = |reset| Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset,
+            reset_fences: false,
+            scenario: None,
+        };
+        let kept = |app: &App| {
+            let world = &app.game.as_ref().unwrap().world;
+            let c = world.zoo.entities.last().unwrap().common.as_ref();
+            c.unwrap().filter.unwrap()
+        };
+        app.begin(&start(false));
+        assert_eq!(kept(app), filter);
+        app.begin(&start(true));
+        let today = crate::timing::file_time(0);
+        let reset = crate::zoo::Filter {
+            upkeep: [0; 3],
+            built: today,
+            serviced: today,
+            months: 1,
+            ..filter
+        };
+        assert_eq!(kept(app), reset);
+    });
+}
+
+#[test]
+fn a_scenario_start_prepares_its_goals_and_a_later_game_drops_them() {
+    with_menu("scenario-goals", "", |app, _| {
+        let start = |scenario: Option<&str>| Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: scenario.map(String::from),
+        };
+        let seen = |app: &mut App, from: u64| -> Vec<String> {
+            let mut lines = Vec::new();
+            for p in from..from + 60 {
+                app.pass(66 * p, &[]);
+                lines
+                    .extend((app.log_lines(p, 66 * p).into_iter()).filter_map(|l| {
+                        l.split_once(" sim scenario ").map(|(_, r)| r.to_string())
+                    }));
+            }
+            lines
+        };
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        app.begin(&start(Some("s/play.scn")));
+        let lines = seen(app, 1);
+        assert_eq!(
+            lines,
+            [
+                "start s/play.scn 2",
+                "trigger t start 2 0 0 0",
+                "trigger g 1 1 0 0 0"
+            ]
+        );
+        // Another game is opened: the scenario is over, whatever its state.
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        app.begin(&start(None));
+        assert!(seen(app, 100).is_empty());
+        // A scenario file that cannot be read starts a plain game.
+        app.begin(&start(Some("s/none.scn")));
+        assert!(seen(app, 200).is_empty());
+    });
+}
+
+#[test]
+fn a_scenario_disables_an_element_shows_popups_and_a_hint_sees_presses_and_gives_back_at_the_next_game()
+ {
+    with_menu("scenario-ui", "", |app, _| {
+        let start = Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: Some("s/ui.scn".into()),
+        };
+        let lines = std::cell::RefCell::new(Vec::new());
+        let next = std::cell::Cell::new(1);
+        let pass = |app: &mut App, commands: &[Command]| {
+            let p = next.replace(next.get() + 1);
+            app.pass(66 * p, commands);
+            lines
+                .borrow_mut()
+                .extend((app.log_lines(p, 66 * p).into_iter()).filter_map(|l| {
+                    l.split_once(" sim scenario ")
+                        .filter(|(_, r)| !r.starts_with("trigger"))
+                        .map(|(_, r)| r.to_string())
+                }));
+        };
+        let disabled = |app: &mut App| {
+            let ui = app.interface().unwrap();
+            ui.tree.elements[ui.tree.find(2001).unwrap()].state & DISABLED != 0
+        };
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        app.begin(&start);
+        pass(app, &[]);
+        // The start trigger disabled the button and showed its popup, which does not stop the game.
+        assert!(disabled(app) && shown(app, 45300) && !app.interface().unwrap().modal_open());
+        assert_eq!(
+            *lines.borrow(),
+            [
+                "start s/ui.scn 3",
+                "element 2001 disable",
+                "popup 45300 open"
+            ]
+        );
+        // The rule saw the element shown at its first pass: a modal popup and the hint.
+        for _ in 2..70 {
+            pass(app, &[]);
+        }
+        assert!(app.interface().unwrap().modal_open() && shown(app, 45000));
+        assert!(shown(app, 45400));
+        let ui = app.interface().unwrap();
+        assert_eq!(ui.text(45406), Some(b"text-151".to_vec()));
+        assert_eq!(ui.text(45006), Some(b"text-153".to_vec()));
+        assert_eq!(lines.borrow()[3..], ["popup 45000 modal", "hint 45400"]);
+        // The picture of the popup is in its image, which took its size.
+        let ui = app.interface().unwrap();
+        assert!(ui.shown(45004));
+        assert_eq!(ui.tree.rect(ui.tree.find(45004).unwrap()).2, 2);
+        // OK closes it; the hint's button shows it again, and OK closes it once more.
+        pass(app, &key(Key::Enter));
+        assert!(!app.interface().unwrap().modal_open());
+        pass(app, &click(3, 3));
+        assert!(app.interface().unwrap().modal_open() && shown(app, 45400));
+        assert_eq!(lines.borrow().last().unwrap(), "hint 45400");
+        pass(app, &key(Key::Enter));
+        assert!(!app.interface().unwrap().modal_open());
+        // A press of the other button is seen by the second goal, which enables the first.
+        for _ in 0..2 {
+            pass(app, &[]);
+        }
+        pass(app, &click(14, 44));
+        for _ in 0..70 {
+            pass(app, &[]);
+        }
+        assert!(!disabled(app), "{:?}", lines.borrow());
+        assert_eq!(lines.borrow().last().unwrap(), "element 2001 enable");
+        // The hint stays. A game that opens hides it and gives back what the scenario changed.
+        assert!(shown(app, 45400));
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        assert!(!shown(app, 45400));
+        app.begin(&start);
+        pass(app, &[]);
+        assert!(disabled(app));
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        assert!(!disabled(app));
+    });
+}
+
+#[test]
+fn a_scenario_start_builds_the_research_tree_and_the_next_game_drops_it() {
+    with_menu("research-tree", "", |app, _| {
+        let start = |scenario: Option<&str>| Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: scenario.map(String::from),
+        };
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        // One of two programs is free; a scenario with no research has an empty tree.
+        app.begin(&start(Some("s/res.scn")));
+        assert_eq!(app.sim.research_share(), 50);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        app.begin(&start(Some("s/play.scn")));
+        assert_eq!(app.sim.research_share(), 100);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        app.begin(&start(Some("s/none.scn")));
+        assert_eq!(app.sim.research_share(), 0);
+    });
+}
+
+/// Whether the icon element `45002` of the question layout holds the picture `name`.
+fn icon_holds(app: &mut App, name: &str) -> bool {
+    let vfs = app.renderer.vfs();
+    let ui = app.interface().unwrap();
+    let picture = ui.tree.picture(vfs, name);
+    let i = ui.tree.find(45002).unwrap();
+    picture.is_some() && ui.tree.elements[i].look.animation == [picture]
+}
+
+#[test]
+fn a_research_completion_puts_the_exclamation_on_the_dialog_icon_and_a_question_its_own() {
+    use crate::research::Done;
+    use crate::ui::interface::Buttons;
+    const EXCLAIM: &str = "ui/sharedui/exclaim/exclaim";
+    const QUESTION: &str = "ui/sharedui/question/question";
+    // The two icon pictures, each a one-frame animation (its sprite files are shared).
+    let animation = |name: &str| {
+        let frames = crate::ui::draw::tests::two_frames("exclaim");
+        let (_, bytes) = frames.iter().find(|(n, _)| n.ends_with(".ani")).unwrap();
+        (format!("{name}.ani"), bytes.clone())
+    };
+    let mut pictures = vec![animation(EXCLAIM), animation(QUESTION)];
+    let sprites = crate::ui::draw::tests::two_frames("exclaim");
+    pictures.extend(sprites.into_iter().filter(|(n, _)| !n.ends_with(".ani")));
+    let files: Vec<(&str, Vec<u8>)> = pictures
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.clone()))
+        .collect();
+    with_game("research-icon", "", &files, None, |app, _| {
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        app.sim.push_research_done(Done {
+            name: 22,
+            target: 3,
+            effect: 1,
+            vals: [0; 3],
+        });
+        app.research_done();
+        // The completion dialog is open with the exclamation on its icon.
+        assert!(shown(app, 45000) && icon_holds(app, EXCLAIM));
+        app.interface().unwrap().answer(1);
+        assert!(!shown(app, 45000));
+        // A question shows its own picture on the icon, and the icon is cleared when it closes.
+        assert!(app.interface().unwrap().ask(45000, b"?", Buttons::YES_NO));
+        assert!(icon_holds(app, QUESTION));
+        app.interface().unwrap().answer(1);
+        assert!(!shown(app, 45002));
+    });
+}
+
+#[test]
+fn building_upgrades_come_from_the_free_programs_and_from_each_completion() {
+    use crate::building::upgrade::Upgrade;
+    use crate::research::Done;
+    let program = |name: i32, cost: i32, upkeep: i32| {
+        format!(
+            "[research]\nname={name}\ncost={cost}\ntarget=3\neffect=1\neffectval1={upkeep}\n\
+             effectval2=4\neffectval3=-1\nentityIcon=ui/i{name}\n"
+        )
+        .into_bytes()
+    };
+    let files = [
+        ("s/up.scn", b"[start]\nresearch=resu.cfg\n".to_vec()),
+        ("resu.cfg", b"[branches]\nbranch=ub.cfg\n".to_vec()),
+        ("ub.cfg", b"[branch]\nname=1\ncategory=uc.cfg\n".to_vec()),
+        (
+            "uc.cfg",
+            b"[category]\nname=2\nprogram=u1.cfg\nprogram=u2.cfg\nprogram=u3.cfg\n".to_vec(),
+        ),
+        ("u1.cfg", program(21, 0, 0)),
+        ("u2.cfg", program(22, 50, 200)),
+        // The same name again: not added twice.
+        ("u3.cfg", program(21, 70, 999)),
+    ];
+    with_game("upgrades", "", &files, None, |app, _| {
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        let start = Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: Some("s/up.scn".into()),
+        };
+        app.begin(&start);
+        let held = |app: &App| {
+            let lists = &app.game.as_ref().unwrap().world.units.upgrades;
+            lists
+                .get(&3)
+                .map_or_else(Vec::new, |l| l.iter().map(|u: &Upgrade| u.name).collect())
+        };
+        // The free program is there from the start, with its numbers.
+        assert_eq!(held(app), [21]);
+        let first = &app.game.as_ref().unwrap().world.units.upgrades[&3][0];
+        assert_eq!(
+            (first.icon.as_str(), first.upkeep, first.adult, first.child),
+            ("ui/i21", 0, 4, -1)
+        );
+        // A completion adds its upgrade; the same program again adds nothing.
+        let done = |name| Done {
+            name,
+            target: 3,
+            effect: 1,
+            vals: [0; 3],
+        };
+        app.sim.push_research_done(done(22));
+        app.sim.push_research_done(done(22));
+        app.research_done();
+        assert_eq!(held(app), [21, 22]);
+        assert_eq!(
+            app.game.as_ref().unwrap().world.units.upgrades[&3][1].upkeep,
+            200
+        );
+        // A program of another effect, or an unknown one, adds nothing.
+        app.sim.push_research_done(Done {
+            effect: 0,
+            ..done(22)
+        });
+        app.sim.push_research_done(done(99));
+        app.research_done();
+        assert_eq!(held(app), [21, 22]);
+        // A saved game takes the upgrades of the programs its section completes, in tree order:
+        // 22 is done in its file, 21 is not (its second program of that name is the paid one); a
+        // game opened with no start builds no tree.
+        let mut section = 0u32.to_le_bytes().to_vec();
+        for (id, value) in [(22u32, 50f32), (21, 0.0)] {
+            section.extend(2i32.to_le_bytes());
+            section.extend(id.to_le_bytes());
+            section.extend(value.to_bits().to_le_bytes());
+        }
+        section.extend((-1i32).to_le_bytes());
+        let zoo = || {
+            let mut zoo = Zoo::parse(&crate::zoo::tests::naming(map(), Some("s/up.scn"))).unwrap();
+            zoo.set_research(section.clone());
+            zoo
+        };
+        app.open_zoo(zoo(), Money::default(), true).unwrap();
+        assert_eq!(held(app), [21, 22]);
+        app.open_zoo(zoo(), Money::default(), false).unwrap();
+        assert!(held(app).is_empty());
+    });
+}
+
+#[test]
+fn a_saved_game_builds_its_scenarios_tree_reads_its_section_and_writes_it_back() {
+    with_menu("research-load", "", |app, files| {
+        app.pass(0, &[]);
+        let mut section = 0u32.to_le_bytes().to_vec();
+        // Branch 1 at level 0, category 2 ticked, the program 11 done, one unknown program.
+        for (kind, id, value) in [(0i32, 1u32, 0u32), (2, 11, 5f32.to_bits()), (2, 99, 1)] {
+            section.extend(kind.to_le_bytes());
+            section.extend(id.to_le_bytes());
+            section.extend(value.to_le_bytes());
+        }
+        section.extend((-1i32).to_le_bytes());
+        let zoo = |scenario: Option<&str>| {
+            let mut zoo = Zoo::parse(&crate::zoo::tests::naming(map(), scenario)).unwrap();
+            zoo.set_research(section.clone());
+            zoo
+        };
+        let saved_section = |app: &mut App| {
+            let file = files.0.join("out.zoo");
+            app.save_game(file.to_str().unwrap());
+            Zoo::parse(&std::fs::read(file).unwrap())
+                .unwrap()
+                .research()
+                .to_vec()
+        };
+        // A saved game of a scenario: the tree is built (half done), then the section is read.
+        app.open_zoo(zoo(Some("s/res.scn")), Money::default(), true)
+            .unwrap();
+        assert_eq!(app.sim.research_share(), 100);
+        let mut written = section.clone();
+        // The program that no tree holds is not written, the others are, in tree order.
+        written.truncate(4);
+        for (kind, id, value) in [
+            (0i32, 1u32, 0u32),
+            (1, 2, 1),
+            (2, 10, 0),
+            (2, 11, 5f32.to_bits()),
+        ] {
+            written.extend(kind.to_le_bytes());
+            written.extend(id.to_le_bytes());
+            written.extend(&value.to_le_bytes()[..if kind == 1 { 1 } else { 4 }]);
+        }
+        written.extend((-1i32).to_le_bytes());
+        assert_eq!(saved_section(app), written);
+        // `load FILE` and Continue open a saved game as one.
+        let file = files.0.join("res.zoo");
+        std::fs::write(
+            &file,
+            zoo(Some("s/res.scn")).write(&Money::default()).unwrap(),
+        )
+        .unwrap();
+        assert!(app.load_saved(file.to_str().unwrap()));
+        assert_eq!(app.sim.research_share(), 100);
+        // A start ignores the section of its file (7.4).
+        app.open_zoo(zoo(Some("s/res.scn")), Money::default(), false)
+            .unwrap();
+        assert_eq!(app.sim.research_share(), 0);
+        // No scenario: no tree, the section is kept as read.
+        app.open_zoo(zoo(None), Money::default(), true).unwrap();
+        assert_eq!(app.sim.research_share(), 0);
+        assert_eq!(saved_section(app), section);
+    });
+}
+
+/// The two expansions of the made-up install, and scenarios that say what they want.
+fn selector_files() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("xpac00.cfg", b"[expansion]\nid=0\nlistid=22901\n".to_vec()),
+        ("xpac02.cfg", b"[expansion]\nid=2\nlistid=22903\n".to_vec()),
+        ("s/base.scn", b"[desc]\nname=16001\n".to_vec()),
+        (
+            "s/locked.scn",
+            b"[desc]\nexpansionLocked=1\nexpansion=3\ndefaultExpansion=1\n".to_vec(),
+        ),
+        ("s/none.scn", b"[desc]\nname=17000\n".to_vec()),
+        ("s/two.scn", b"[desc]\nname=17000\nexpansion=3\n".to_vec()),
+        ("s/nine.scn", b"[desc]\nname=17000\nexpansion=9\n".to_vec()),
+    ]
+}
+
+#[test]
+fn a_start_sets_the_selector_to_the_raw_expansion_first() {
+    with_game("selector-start", "", &selector_files(), None, |app, _| {
+        app.pass(0, &[]);
+        let started = |app: &mut App, scenario: &str, stored| {
+            let mut zoo = Zoo::parse(&map()).unwrap();
+            zoo.expansion = stored;
+            app.open_game(zoo, Money::default()).unwrap();
+            let start = Start {
+                path: "saved.zoo".into(),
+                label: "scenario".into(),
+                forget_last: true,
+                freeform: false,
+                cash: Default::default(),
+                reset: false,
+                reset_fences: false,
+                scenario: Some(scenario.into()),
+            };
+            app.begin(&start);
+            app.game.as_ref().map(|g| g.build.value())
+        };
+        assert_eq!(started(app, "s/base.scn", 3), Some(1), "the base game");
+        assert_eq!(started(app, "s/locked.scn", 0), Some(1), "defaultExpansion");
+        // Whatever the map file stores: the key's value, or All without the key.
+        assert_eq!(started(app, "s/none.scn", 3), Some(0), "no key");
+        assert_eq!(started(app, "s/two.scn", 1), Some(3), "the key");
+        assert_eq!(started(app, "s/nine.scn", 3), Some(0), "no such row");
+        assert_eq!(started(app, "s/gone.scn", 3), Some(0), "no scenario file");
+    });
+}
+
+#[test]
+fn a_resumed_scenario_sets_the_selector_over_the_files_value() {
+    with_game("selector-resume", "", &selector_files(), None, |app, _| {
+        app.pass(0, &[]);
+        let resumed = |app: &mut App, scenario: Option<&str>, stored| {
+            let bytes = crate::zoo::tests::naming(map(), scenario);
+            let mut zoo = Zoo::parse(&bytes).unwrap();
+            zoo.expansion = stored;
+            app.open_game_as(zoo, Money::default(), true).unwrap();
+            app.game.as_ref().map(|g| g.build.value())
+        };
+        assert_eq!(
+            resumed(app, Some("s/base.scn"), 3),
+            Some(1),
+            "the base game"
+        );
+        assert_eq!(
+            resumed(app, Some("s/locked.scn"), 0),
+            Some(1),
+            "defaultExpansion"
+        );
+        // The other scenarios and the files with none keep the file's value.
+        assert_eq!(resumed(app, Some("s/none.scn"), 3), Some(3));
+        assert_eq!(
+            resumed(app, Some("s/two.scn"), 3),
+            Some(3),
+            "not the raw key"
+        );
+        assert_eq!(resumed(app, None, 3), Some(3));
+        assert_eq!(resumed(app, None, 7), Some(0), "no such row");
+    });
+}
+
+#[test]
+fn escape_and_a_press_on_the_map_close_the_selector_without_a_choice() {
+    with_game("selector-close", "", &selector_files(), None, |app, _| {
+        app.pass(0, &[]);
+        app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+            .unwrap();
+        let open = |app: &mut App| {
+            app.ui.as_mut().unwrap().show(152);
+            app.pass(33, &[]);
+            assert!(app.selector_open());
+        };
+        let key = Command::Key(Key::Escape, false, false);
+        let press = click(60, 5);
+        for command in [&[key][..], &press[..]] {
+            open(app);
+            app.pass(66, command);
+            app.pass(99, &[]);
+            assert!(!app.selector_open(), "{command:?}");
+            assert!(!app.ui.as_ref().unwrap().shown(152));
+            assert_eq!(app.game.as_ref().map(|g| g.build.value()), Some(0));
+        }
+    });
+}
+
+#[test]
+fn the_selector_takes_the_files_value_and_the_save_writes_the_value_it_holds() {
+    let more = [
+        (
+            "xpac00.cfg",
+            b"[expansion]\nid=0\nname=zoo\nlistid=22901\n".to_vec(),
+        ),
+        (
+            "xpac02.cfg",
+            b"[expansion]\nid=2\nname=aqua\nlistid=22903\n".to_vec(),
+        ),
+    ];
+    with_game("selector-save", "", &more, None, |app, files| {
+        app.pass(0, &[]);
+        let written = |app: &mut App| {
+            let file = files.0.join("out.zoo");
+            app.save_game(file.to_str().unwrap());
+            Zoo::parse(&std::fs::read(file).unwrap()).unwrap().expansion
+        };
+        let value = |app: &App| app.game.as_ref().map(|g| g.build.value());
+        let open = |app: &mut App, stored: u32| {
+            let mut zoo = Zoo::parse(&map()).unwrap();
+            zoo.expansion = stored;
+            app.open_zoo(zoo, Money::default(), true).unwrap();
+        };
+        // A row of the file is the value; a value without a row is held and saved as All.
+        open(app, 3);
+        assert_eq!((value(app), written(app)), (Some(3), 3));
+        open(app, 2);
+        assert_eq!((value(app), written(app)), (Some(0), 0));
+        open(app, u32::MAX);
+        assert_eq!((value(app), written(app)), (Some(0), 0));
+        // Choosing a row (the first is All, then the files' ids in order) is what a save writes.
+        app.expansion_row(2);
+        assert_eq!((value(app), written(app)), (Some(3), 3));
+        app.expansion_row(0);
+        assert_eq!((value(app), written(app)), (Some(0), 0));
+        app.expansion_row(-1);
+        app.expansion_row(9);
+        assert_eq!(value(app), Some(0));
+    });
+}
+
+#[test]
+fn a_saved_game_whose_scenario_cannot_be_read_is_refused_and_the_game_open_stays() {
+    with_menu("research-refused", "", |app, _| {
+        app.pass(0, &[]);
+        // Branch 1 at level 0 and the program 11 done: the share is 100 once it is read.
+        let mut section = 0u32.to_le_bytes().to_vec();
+        for (kind, id, value) in [(0i32, 1u32, 0u32), (2, 11, 5f32.to_bits())] {
+            section.extend(kind.to_le_bytes());
+            section.extend(id.to_le_bytes());
+            section.extend(value.to_le_bytes());
+        }
+        section.extend((-1i32).to_le_bytes());
+        let zoo = |scenario: &str| {
+            let mut zoo = Zoo::parse(&crate::zoo::tests::naming(map(), Some(scenario))).unwrap();
+            zoo.set_research(section.clone());
+            zoo
+        };
+        app.open_zoo(zoo("s/res.scn"), Money::default(), true)
+            .unwrap();
+        assert_eq!(app.sim.research_share(), 100);
+        // A missing file, an empty one and one with no section header are refused with the
+        // old-version message, and the game open before is kept; one header is enough to load.
+        for name in ["s/none.scn", "s/empty.scn", "s/garbage.scn"] {
+            let refused = zoo(name);
+            let message = format!("unsupported old version {}", refused.version);
+            assert_eq!(app.open_zoo(refused, Money::default(), true), Err(message));
+            assert_eq!(app.sim.research_share(), 100);
+        }
+        app.open_zoo(zoo("s/header.scn"), Money::default(), true)
+            .unwrap();
+    });
+}
+
+#[test]
+fn a_scenario_start_reads_its_economy_file_over_the_games_and_the_next_game_drops_it() {
+    let more = [
+        ("s/eco.scn", b"[start]\neconomy=s/eco.cfg\n".to_vec()),
+        ("s/gone.scn", b"[start]\neconomy=s/gone.cfg\n".to_vec()),
+        (
+            "s/eco.cfg",
+            b"[characteristics]\ncMaxAdultAdmissionPrice=12\ncDonationChance=9\n".to_vec(),
+        ),
+    ];
+    with_game("scenario-economy", "", &more, None, |app, _| {
+        let start = |scenario: &str| Start {
+            path: "saved.zoo".into(),
+            label: "scenario".into(),
+            forget_last: true,
+            freeform: false,
+            cash: Default::default(),
+            reset: false,
+            reset_fences: false,
+            scenario: Some(scenario.into()),
+        };
+        app.pass(0, &[]);
+        let open = |app: &mut App| {
+            app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+                .unwrap()
+        };
+        open(app);
+        let before = app.sim.status.price;
+        assert!(
+            before > 12.0,
+            "the map's price is above the scenario's maximum"
+        );
+        app.begin(&start("s/eco.scn"));
+        let s = &app.sim.status;
+        assert_eq!((s.price, s.settings.donation_chance), (12.0, 9));
+        // A file that is missing or a scenario without one changes nothing; a new game starts over.
+        open(app);
+        app.begin(&start("s/gone.scn"));
+        assert_eq!(app.sim.status.price, before);
+        open(app);
+        app.begin(&start("s/play.scn"));
+        assert_eq!(app.sim.status.settings.donation_chance, 0);
+        // A saved game that holds the scenario sets the economy up again and keeps its stored
+        // price, outside the range or not, and the stored date of the last escape; one that holds
+        // none keeps the price too.
+        for (scenario, donation, max) in [(Some("s/eco.scn"), 9, 12.0), (None, 0, 100.0)] {
+            let mut zoo = Zoo::parse(&crate::zoo::tests::naming(map(), scenario)).unwrap();
+            zoo.clocks.status.price = 70.0;
+            zoo.clocks.status.escape = 5;
+            app.open_game_as(zoo, Money::default(), true).unwrap();
+            let s = &app.sim.status;
+            assert_eq!((s.price, s.settings.donation_chance), (70.0, donation));
+            assert_eq!((s.escape, s.settings.max_price), (5, max));
+        }
+    });
+}
+
+#[test]
+fn a_saved_game_resumes_its_scenario_with_the_stored_goal_states_and_writes_them_back() {
+    with_menu("goals-load", "", |app, files| {
+        app.pass(0, &[]);
+        let zoo = |scenario: &str, states: &[u32], version: u32| {
+            let bytes = crate::zoo::tests::naming(map(), Some(scenario));
+            let mut zoo = Zoo::parse(&bytes).unwrap();
+            zoo.version = version;
+            zoo.set_scenario(scenario, states);
+            zoo
+        };
+        let saved = |app: &mut App| {
+            let file = files.0.join("out.zoo");
+            app.save_game(file.to_str().unwrap());
+            Zoo::parse(&std::fs::read(file).unwrap())
+                .unwrap()
+                .scenario_states()
+        };
+        // The timer and the goal of `play.scn`: the states come back, and are written.
+        for states in [[0, 0], [3, 1], [0, 2]] {
+            app.open_game_as(zoo("s/play.scn", &states, 106), Money::default(), true)
+                .unwrap();
+            let scenario = app.sim.scenario().unwrap();
+            assert_eq!(
+                (scenario.file(), scenario.states()),
+                ("s/play.scn", states.to_vec())
+            );
+            assert_eq!(saved(app), states);
+        }
+        // Extra words are dropped, missing ones are 0.
+        app.open_game_as(zoo("s/play.scn", &[1, 1, 1], 106), Money::default(), true)
+            .unwrap();
+        assert_eq!(saved(app), [1, 1]);
+        app.open_game_as(zoo("s/play.scn", &[], 106), Money::default(), true)
+            .unwrap();
+        assert_eq!(saved(app), [0, 0]);
+        // A start does not resume: the next game has no scenario until one begins.
+        app.open_game_as(zoo("s/play.scn", &[3, 1], 106), Money::default(), false)
+            .unwrap();
+        assert!(app.sim.scenario().is_none());
+        // A scenario that cannot be read refuses the load, from version 70 to 85 as from 86, and
+        // the game open before stays.
+        for version in [80, 106] {
+            let refused = zoo("s/none.scn", &[3, 1], version);
+            let message = format!("unsupported old version {version}");
+            assert_eq!(app.open_zoo(refused, Money::default(), true), Err(message));
+            assert!(app.sim.scenario().is_none());
+        }
+    });
+}
+
+#[test]
+fn a_version_45_block_is_the_name_alone_and_the_scenario_resumes() {
+    with_menu("rv804-v45", "", |app, _| {
+        app.pass(0, &[]);
+        let mut bytes = crate::zoo::tests::file(45, 2, 2, &[], &[]);
+        let old = [5, 0, 0, 0, 1, 0, 0, 0, b'x'];
+        let at = bytes.windows(9).position(|w| w == old).unwrap();
+        let name = b"s/play.scn";
+        let block = [&(name.len() as u32).to_le_bytes()[..], name].concat();
+        bytes.splice(at..at + 9, block);
+        let zoo = Zoo::parse(&bytes).unwrap();
+        assert_eq!(zoo.version, 45);
+        app.open_game_as(zoo, Money::default(), true).unwrap();
+        let scenario = app.sim.scenario().expect("the named scenario resumes");
+        assert_eq!(
+            (scenario.file(), scenario.states()),
+            ("s/play.scn", vec![0, 0])
+        );
+    });
+}
+
+/// A scenario of one branch (levels none and max) with two programs and one of its own.
+fn research_files() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("s/rp.scn", b"[start]\nresearch=resp.cfg\n".to_vec()),
+        ("resp.cfg", b"[branches]\nbranch=pb.cfg\n".to_vec()),
+        (
+            "pb.cfg",
+            b"[branch]\nname=1\ncategory=pc.cfg\nfunding=none\nfunding=max\n\
+              [none]\nname=23100\n[max]\nname=23103\ncost=2000\nwork=45\n"
+                .to_vec(),
+        ),
+        (
+            "pc.cfg",
+            b"[category]\nname=2\nprogram=pa.cfg\nprogram=pd.cfg\n".to_vec(),
+        ),
+        (
+            "pa.cfg",
+            b"[research]\nname=23401\ncost=90\norder=1\n".to_vec(),
+        ),
+        (
+            "pd.cfg",
+            b"[research]\nname=23402\ncost=10\norder=2\n".to_vec(),
+        ),
+    ]
+}
+
+fn research_start(app: &mut App) {
+    app.pass(0, &[]);
+    app.open_game(Zoo::parse(&map()).unwrap(), Money::default())
+        .unwrap();
+    app.begin(&Start {
+        path: "saved.zoo".into(),
+        label: "scenario".into(),
+        forget_last: true,
+        freeform: false,
+        cash: Default::default(),
+        reset: false,
+        reset_fences: false,
+        scenario: Some("s/rp.scn".into()),
+    });
+}
+
+#[test]
+fn the_r_key_opens_the_research_panel_and_its_buttons_change_the_tree() {
+    with_game("research-panel", "", &research_files(), None, |app, _| {
+        research_start(app);
+        let tree = |app: &App| app.sim.research().unwrap().branches[0].clone();
+        assert!(!shown(app, 15));
+        let mut now = 100;
+        let mut told = |app: &mut App, commands: &[Command]| {
+            app.pass(now / 20, commands);
+            let lead = format!("pass {} t={now} panel ", now / 20);
+            now += 100;
+            app.log_lines((now - 100) / 20, now - 100)
+                .iter()
+                .filter_map(|l| l.strip_prefix(&lead))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        // The key shows the panel, which is filled at once (the game is not paused).
+        let lines = told(app, &[Command::Char(b'r')]);
+        assert!(shown(app, 15));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("research tab 0 side 0 \"p23401\" \"Unfunded\""),
+            "{lines:?}"
+        );
+        // The key again closes it.
+        told(app, &[Command::Char(b'R')]);
+        assert!(!shown(app, 15));
+        told(app, &[Command::Char(b'r')]);
+        // The Research tab, then the plus button: the level goes to max, the minus button back.
+        app.interface().unwrap().press_button(4009);
+        let lines = told(app, &[]);
+        assert!(lines[0].contains("research tab 1"), "{lines:?}");
+        app.interface().unwrap().press_button(4004);
+        let lines = told(app, &[]);
+        assert_eq!(tree(app).level, 1);
+        assert!(lines[0].contains("funding \"$67 top\""), "{lines:?}");
+        app.interface().unwrap().press_button(4004);
+        told(app, &[]);
+        assert_eq!(tree(app).level, 1, "held at the last level");
+        app.interface().unwrap().press_button(4003);
+        app.interface().unwrap().press_button(4003);
+        told(app, &[]);
+        assert_eq!(tree(app).level, 0);
+        // A row flips its category's tick; a row that is not there flips nothing.
+        for row in [-1, 5, i32::MIN, i32::MAX] {
+            app.research_tick(row);
+        }
+        assert!(tree(app).categories[0].tick);
+        app.research_tick(0);
+        let lines = told(app, &[]);
+        assert!(!tree(app).categories[0].tick);
+        assert!(lines[0].contains("ticks 0"), "{lines:?}");
+        // On the Status tab the buttons change nothing.
+        app.interface().unwrap().press_button(4008);
+        app.research_fund(true);
+        app.research_tick(0);
+        assert_eq!((tree(app).level, tree(app).categories[0].tick), (0, false));
+    });
+}
+
+#[test]
+fn the_panel_shown_again_runs_its_last_tab() {
+    with_game("research-reopen", "", &research_files(), None, |app, _| {
+        research_start(app);
+        let mut at = 0;
+        let mut pass = |app: &mut App, commands: &[Command]| {
+            at += 5;
+            app.pass(at, commands);
+        };
+        pass(app, &[Command::Char(b'r')]);
+        app.interface().unwrap().press_button(4009);
+        pass(app, &[]);
+        assert!(shown(app, 151));
+        pass(app, &[Command::Char(b'r')]);
+        assert!(!shown(app, 15));
+        pass(app, &[Command::Char(b'r')]);
+        assert!(shown(app, 15));
+        assert!(shown(app, 151), "the page of the branch tab is back");
+        assert_eq!(app.interface().unwrap().text(4001).unwrap(), b"branch-1");
+    });
+}
+
+#[test]
+fn a_completion_opens_a_dialog_and_a_branch_with_nothing_left_a_second_one() {
+    use crate::research::Done;
+    with_game("research-dialog", "", &research_files(), None, |app, _| {
+        research_start(app);
+        let done = |name| Done {
+            name,
+            target: 0,
+            effect: 5,
+            vals: [0; 3],
+        };
+        // The branch still has a program: one dialog, with the message of the line.
+        app.sim.push_research_done(done(23401));
+        app.research_done();
+        let ui = app.interface().unwrap();
+        assert_eq!(
+            ui.take_events()
+                .iter()
+                .filter(|e| *e == "notify 45000")
+                .count(),
+            1
+        );
+        assert_eq!(ui.text(45006).unwrap(), b"done p23401");
+        assert!(!ui.modal_open(), "the game runs on");
+        // Every program done: the second dialog names the branch.
+        for b in &mut app.sim.research_mut().unwrap().branches {
+            b.current = None;
+        }
+        app.sim.push_research_done(done(23402));
+        app.research_done();
+        let ui = app.interface().unwrap();
+        assert_eq!(
+            ui.take_events()
+                .iter()
+                .filter(|e| *e == "notify 45000")
+                .count(),
+            2
+        );
+        assert_eq!(ui.text(45006).unwrap(), b"all branch-1");
+        assert_eq!(ui.text(7001).unwrap(), b"all branch-1", "the line too");
+        // A program the tree does not know opens the one dialog only.
+        app.sim.push_research_done(done(99));
+        app.research_done();
+        let ui = app.interface().unwrap();
+        assert_eq!(
+            ui.take_events()
+                .iter()
+                .filter(|e| *e == "notify 45000")
+                .count(),
+            1
+        );
+    });
+}
+
+#[test]
+fn a_saved_game_trains_the_staff_types_of_the_programs_its_section_completes() {
+    let keeper = |class, name: &[u8], id| crate::entity::EntityType {
+        class,
+        type_name: name.to_vec(),
+        subtype: b"m".to_vec(),
+        file: None,
+        config: None,
+        name_id: id,
+        footprint: [1, 1, 1],
+        height: 0,
+    };
+    let mut cat = Catalogue::default();
+    cat.push(keeper("keeper", b"zookeeper", 9552));
+    cat.push(keeper("keeper", b"scientist", 9553));
+    let more = [
+        ("s/tr.scn", b"[start]\nresearch=tr.cfg\n".to_vec()),
+        ("tr.cfg", b"[branches]\nbranch=trb.cfg\n".to_vec()),
+        ("trb.cfg", b"[branch]\nname=1\ncategory=trc.cfg\n".to_vec()),
+        (
+            "trc.cfg",
+            b"[category]\nname=2\nprogram=tra.cfg\nprogram=trd.cfg\n".to_vec(),
+        ),
+        (
+            "tra.cfg",
+            b"[research]\nname=30\ncost=5\neffect=7\ntarget=99\neffectval2=9552\neffectval3=2\n"
+                .to_vec(),
+        ),
+        (
+            "trd.cfg",
+            b"[research]\nname=31\ncost=5\neffect=7\ntarget=99\neffectval2=9553\neffectval3=1\n"
+                .to_vec(),
+        ),
+    ];
+    with_game("train-load", "", &more, Some(cat), |app, _| {
+        app.pass(0, &[]);
+        // Program 30 is done in the file and 31 is not.
+        let mut section = 0u32.to_le_bytes().to_vec();
+        for (id, value) in [(30u32, 5f32), (31, 4.0)] {
+            section.extend(2i32.to_le_bytes());
+            section.extend(id.to_le_bytes());
+            section.extend(value.to_bits().to_le_bytes());
+        }
+        section.extend((-1i32).to_le_bytes());
+        let masks = |app: &App| {
+            let world = &app.game.as_ref().unwrap().world;
+            let cat = app.renderer.catalogue();
+            [0, 1].map(|n| world.research.training(&cat.types[n]))
+        };
+        let zoo = || {
+            let bytes = crate::zoo::tests::naming(map(), Some("s/tr.scn"));
+            let mut zoo = Zoo::parse(&bytes).unwrap();
+            zoo.set_research(section.clone());
+            zoo
+        };
+        app.open_zoo(zoo(), Money::default(), true).unwrap();
+        assert_eq!(masks(app), [2, 0]);
+        // A new game of the map starts with no training, and a load again gives the same.
+        app.open_zoo(zoo(), Money::default(), false).unwrap();
+        assert_eq!(masks(app), [0, 0]);
+        app.open_zoo(zoo(), Money::default(), true).unwrap();
+        assert_eq!(masks(app), [2, 0]);
+    });
+}

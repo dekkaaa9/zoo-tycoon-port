@@ -1,0 +1,8 @@
+{
+  global:
+    Java_*;
+    JNI_*;
+    SDL_main;
+  local:
+    *;
+};

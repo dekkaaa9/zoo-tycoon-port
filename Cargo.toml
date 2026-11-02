@@ -1,0 +1,34 @@
+[package]
+name = "rustyzoo"
+version = "0.0.0"
+edition = "2024"
+description = "Open-source engine that loads the original Zoo Tycoon game data"
+license = "GPL-3.0-or-later AND AGPL-3.0-or-later"
+repository = "https://github.com/RustyZoo/RustyZoo"
+
+[dependencies]
+# SDL is built from source and linked statically. `build-from-source-unix-console`
+# only turns off SDL's "no X11/Wayland found" configure error (CMake option
+# SDL_UNIX_CONSOLE_BUILD); where the X11/Wayland/ALSA/PulseAudio/PipeWire headers
+# are installed, those backends are still detected and built.
+sdl3 = { version = "0.20", features = ["build-from-source-static", "build-from-source-unix-console"] }
+# NihAV's Indeo 5 decoder, vendored and trimmed (AGPL-3.0, see vendor/README.md).
+nihav_core = { path = "vendor/nihav/nihav-core" }
+nihav_indeo = { path = "vendor/nihav/nihav-indeo" }
+png = { version = "0.18.1", default-features = false }
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+fontdue = { version = "0.9.4", default-features = false }
+
+# The month and weekday names of the user's time locale (text::format::date).
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Writes the small archives that the tests need.
+zip = { version = "9.0.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Dev builds: line tables only (panics keep file and line) and split debug info,
+# so each build writes far less to disk.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"

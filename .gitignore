@@ -1,0 +1,16 @@
+/target
+
+# Android build outputs and machine-local config.
+#
+# android/build-apk.bat cross-compiles librustyzoo.so and copies it into
+# app/src/main/jniLibs/, so that directory is a build artifact, not a source. The same script
+# regenerates rustyzoo-android/.cargo/config.toml from ANDROID_NDK_HOME; that file carries
+# absolute paths to the NDK and to this checkout, so it is per-machine and must not be
+# committed either.
+/android/app/build/
+/android/build/
+/android/.gradle/
+/android/local.properties
+/android/rustyzoo-android/target/
+/android/rustyzoo-android/.cargo/config.toml
+/android/app/src/main/jniLibs/

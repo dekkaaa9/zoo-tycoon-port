@@ -1,0 +1,187 @@
+//! The building panels in the game (information panels 4.1, 18; guest buildings 7.2, 10.3): what
+//! opens them (a guest building or a tank filter clicked on the map, [`App::select`]), the price buttons, the sell
+//! and pick-up buttons, and the look at what the player did to them. The panels themselves are [`crate::panel::building`].
+
+use super::*;
+use crate::building::Kind;
+use crate::panel::building as panel;
+use crate::place::bulldozer::type_of;
+use crate::text::to_cp1252;
+
+/// The layouts the building panel shows: the two building panels and the filter panel.
+const LAYOUTS: [i32; 3] = [panel::CHARGING, panel::PLAIN, panel::FILTER];
+
+impl App<'_> {
+    /// The panel of entity `id`, if it is a guest building or a tank filter: the charging layout
+    /// for a building that charges, the other one for the rest, the filter's own for a filter.
+    pub(super) fn building_layout(&self, id: u32) -> Option<i32> {
+        let (game, cat) = (self.game.as_ref()?, self.renderer.catalogue());
+        let ty = type_of(cat, &game.world.zoo.entities[game.world.find(id)?])?;
+        if ty.class == "filter" {
+            return Some(panel::FILTER);
+        }
+        let charging = Kind::of(ty, game.world.units.prices.default).commerce;
+        crate::month::is_guest_building(ty).then_some(match charging {
+            true => panel::CHARGING,
+            false => panel::PLAIN,
+        })
+    }
+
+    /// Selects the building with entity id `id` and shows its panel in `layout`, filled at once.
+    pub(super) fn open_building(&mut self, id: u32, layout: i32) {
+        self.close_building();
+        let (Some(game), Some(ui)) = (&mut self.game, &mut self.ui) else {
+            return;
+        };
+        game.selected = Some(id);
+        game.building.select(id, layout);
+        ui.show(layout);
+    }
+
+    /// Hides the building panels: the next look clears the selection.
+    pub(super) fn close_building(&mut self) {
+        if let Some(ui) = &mut self.ui {
+            for layout in LAYOUTS {
+                ui.set_hidden(layout, true);
+            }
+        }
+    }
+
+    /// Notices what the player did to the building panel and the selected building since the
+    /// last look: a closed panel or a building that left the world clears the selection (`panel
+    /// building none`), and the panel sits above the exhibit panel while it is shown (4.2).
+    pub(super) fn building_sync(&mut self) {
+        let (Some(game), Some(ui)) = (&mut self.game, &mut self.ui) else {
+            return;
+        };
+        let gone = (game.building.selected).is_some_and(|id| game.world.find(id).is_none());
+        if gone || !ui.shown(game.building.layout) {
+            if game.building.selected.is_some() {
+                let word = if game.building.layout == panel::FILTER {
+                    "filter"
+                } else {
+                    "building"
+                };
+                self.panel_lines.push(format!("{word} none"));
+            }
+            game.building.deselect();
+            for layout in LAYOUTS {
+                ui.set_hidden(layout, true);
+            }
+        }
+        let above = ui.shown(exhibit::LAYOUT);
+        for layout in LAYOUTS {
+            ui.set_alt(layout, above);
+        }
+    }
+
+    /// The up or down button of the price (7.2): the selected building's price moves by 0.25
+    /// within its bounds, for every later customer, and the panel shows it at once. Logs
+    /// `building price ID PRICE`.
+    pub(super) fn building_price(&mut self, up: bool) {
+        let max = self.game.as_ref().map_or(0.0, |g| g.world.units.prices.max);
+        self.set_price(|kind, price| kind.pressed(price, max, up));
+    }
+
+    /// The player ended editing the name field of the panel (guest buildings 10.3): a text with a visible
+    /// character is the building's name (exhibits and money 3.6), and the panel shows the name again.
+    pub(super) fn building_rename(&mut self) {
+        let (Some(game), Some(ui)) = (&mut self.game, &self.ui) else {
+            return;
+        };
+        let field = match game.building.layout {
+            panel::CHARGING => panel::NAME,
+            panel::FILTER => panel::FILTER_NAME,
+            _ => panel::PLAIN_NAME,
+        };
+        let bytes = ui.text(field).unwrap_or_default();
+        let at = game.building.selected.and_then(|id| game.world.find(id));
+        if let Some(c) = at.and_then(|at| game.world.zoo.entities[at].common.as_mut())
+            && super::exhibits::visible(&bytes)
+        {
+            c.name = bytes.iter().map(|&b| crate::text::from_cp1252(b)).collect();
+        }
+        game.building.reselect();
+    }
+
+    /// The player ended editing the price field (7.2): the text is cleaned and read as a number
+    /// ([`panel::typed`], no number is 0) and the price takes the up or down step by the
+    /// difference, so it is clamped like a button press.
+    pub(super) fn building_type_price(&mut self) {
+        let (Some(game), Some(ui)) = (&self.game, &self.ui) else {
+            return;
+        };
+        let text = ui.text(panel::PRICE).unwrap_or_default();
+        let symbol = ui.string(SYMBOL);
+        let symbol = if symbol.trim().is_empty() {
+            "$"
+        } else {
+            &symbol
+        };
+        let value = panel::typed(
+            &text,
+            &to_cp1252(symbol),
+            &to_cp1252(crate::text::format::money_group()),
+        );
+        let max = game.world.units.prices.max;
+        if game.building.layout == panel::CHARGING {
+            self.set_price(|kind, price| kind.typed(price, max, value));
+        }
+    }
+
+    /// An upgrade button of the Programs tab (research 6.3): the selected building takes the
+    /// upgrade at the button's position and the panel shows it at once. Logs `building upgrade ID N`.
+    pub(super) fn building_upgrade(&mut self, button: i32) {
+        let Some(game) = &mut self.game else { return };
+        let Some(n) = panel::UPGRADES.iter().position(|&b| b == button) else {
+            return;
+        };
+        let Some(id) = game.building.selected else {
+            return;
+        };
+        let cat = self.renderer.catalogue();
+        let at = game.world.find(id);
+        let ty = at.and_then(|at| type_of(cat, &game.world.zoo.entities[at]));
+        if let Some(ty) = ty
+            && crate::building::upgrade::choose(&mut game.world.units, ty.name_id, id, n)
+        {
+            game.world.units.building_note(format!("upgrade {id} {n}"));
+        }
+        game.building.clock.force = true;
+    }
+
+    /// The sell button (placing 7): the selected building goes as the bulldozer removes it, after
+    /// the question with its refund when `[UI] confirmSell` asks for one; its users are pushed out.
+    pub(super) fn building_sell(&mut self) {
+        if let Some(id) = self.game.as_ref().and_then(|g| g.building.selected) {
+            self.remove_one(id);
+        }
+    }
+
+    /// The pick-up button (unit placing 8.7): the selected building is picked up as a second
+    /// click on it does.
+    pub(super) fn building_pick_up(&mut self) {
+        if let Some(id) = self.game.as_ref().and_then(|g| g.building.selected) {
+            self.lift_building(id);
+        }
+    }
+
+    /// Sets the price of the selected building to what `new` makes of its type and price.
+    fn set_price(&mut self, new: impl FnOnce(&Kind, f32) -> f32) {
+        let Some(game) = &mut self.game else { return };
+        let cat = self.renderer.catalogue();
+        let Some(id) = game.building.selected else {
+            return;
+        };
+        let at = game.world.find(id);
+        let ty = at.and_then(|at| type_of(cat, &game.world.zoo.entities[at]));
+        if let Some(price) =
+            ty.and_then(|ty| crate::building::set_price(&mut game.world, ty, id, new))
+        {
+            game.world
+                .units
+                .building_note(format!("price {id} {price:.2}"));
+        }
+        game.building.clock.force = true;
+    }
+}
