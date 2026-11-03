@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2024"
 description = "Open-source engine that loads the original Zoo Tycoon game data"
 license = "GPL-3.0-or-later AND AGPL-3.0-or-later"
-repository = "https://github.com/RustyZoo/RustyZoo"
+repository = "https://github.com/dekkaaa9/zoo-tycoon-port"
 
 [dependencies]
 # SDL is built from source and linked statically. `build-from-source-unix-console`

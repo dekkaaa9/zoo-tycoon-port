@@ -1,6 +1,6 @@
 # Architecture
 
-How RustyZoo is built, and the choices contributors share. What is not written yet is marked **Planned**. The plan and its progress are in the [milestones](https://github.com/RustyZoo/RustyZoo/milestones).
+How RustyZoo is built, and the choices contributors share. What is not written yet is marked **Planned**. The plan and its progress are in the [milestones](https://github.com/dekkaaa9/zoo-tycoon-port/milestones).
 
 ## Layout
 

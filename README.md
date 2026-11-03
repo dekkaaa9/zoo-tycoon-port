@@ -8,7 +8,7 @@
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-lightgrey.svg)
 
-[Screenshots](https://github.com/RustyZoo/screenshots) · [Roadmap](https://github.com/dekkaaa9/zoo-tycoon-port/milestones) · [Project board](https://github.com/orgs/RustyZoo/projects/1) · [Usage](docs/usage.md)
+[Screenshots](docs/screenshots/android) · [Roadmap](https://github.com/dekkaaa9/zoo-tycoon-port/milestones) · [Project board](https://github.com/dekkaaa9/zoo-tycoon-port/projects) · [Usage](docs/usage.md)
 
 </div>
 
@@ -25,11 +25,14 @@ RustyZoo is not finished, but you can already play a freeform zoo.
 
 | | Feature |
 | :---: | --- |
-| ✅ | Main menu, freeform maps, starting cash |
-| 🚧 | Research, scenarios, awards and translations |
+| ✅ | Main menu, scenario and freeform games, starting cash |
+| ✅ | The map, the interface, animals, guests, construction |
+| ✅ | The camera: pan, zoom, rotate, pause — mouse, keyboard, or touch |
+| ✅ | Android: a ready-to-run APK (see [below](#android)) |
+| 🚧 | Research, awards and translations |
 | 🔜 | Ready-to-run downloads for Windows, macOS and Linux |
 
-Each step is compared with the original, picture by picture, in the [screenshots repository](https://github.com/RustyZoo/screenshots).
+Each step is compared with the original, picture by picture. The Android build is shown running in [docs/screenshots/android](docs/screenshots/android).
 
 ## You need the game
 
