@@ -149,6 +149,27 @@ The startup log names each milestone (`run: data dir`, `run: picture 505 at 400,
 `run: catalogue loaded`, `run: 1107 steps`, `run: main menu up, entering loop`, …) and
 `SDL_main` reports any error, so a failure is visible without a debugger.
 
+### The log file
+
+`logcat` needs a computer. For a device nobody can reach with `adb`, the same lines are mirrored
+into a file beside the game data:
+
+```
+/storage/emulated/0/Android/data/org.rustyzoo/files/rustyzoo.log
+```
+
+`log_file_start` opens it first thing in `SDL_main` — before anything can fail — and truncates
+it, so the file always holds the run that just died. Every line is flushed as it is written,
+because a native crash takes the process with it and anything still buffered is lost.
+
+A panic is recorded too: the default hook writes to `stderr`, which Android discards, so
+`log_file_start` installs its own hook that writes `panic: <message> at <file>:<line>` into the
+file and then calls the previous one. A panic unwinding out through the JNI boundary is what
+usually turns a Rust error into a silent force close, so this is the line that matters most.
+
+A file manager that can reach `Android/data` (ZArchiver, Material Files, or the phone's own with
+"all files access" granted) can pick the file up and send it — no computer, no adb, no root.
+
 ### Tapping the menu
 
 `adb shell input tap x y` lands on the framebuffer point `(x, y)` — the coordinates are 1:1, in

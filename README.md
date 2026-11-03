@@ -110,6 +110,10 @@ What works on Android: the boot sequence, the main menu, scenario and freeform l
 and interface, one-to-one panning, tap and drag, the zoom/rotate/pause buttons, and the
 construction panel. arm64-v8a only. See [`android/README.md`](android/README.md) for the build.
 
+If it closes itself on start-up, the app writes a log of every run to
+`/sdcard/Android/data/org.rustyzoo/files/rustyzoo.log`, next to the game data — a file manager
+that can reach `Android/data` can pick it up and send it. No computer or adb needed.
+
 ## Similar projects
 
 Other people are bringing Zoo Tycoon back too. Have a look:

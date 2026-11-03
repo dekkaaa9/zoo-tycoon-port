@@ -10,7 +10,9 @@
 //! The game data (`D:\Zoo Tycoon` on the desktop) is pushed to the app's external files dir,
 //! which is what `data_dir` points at. See `android/README.md`.
 
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use rustyzoo::app::{App, Command, Mouse};
 use rustyzoo::camera::Settings;
@@ -36,10 +38,65 @@ const DATA_SUBDIR: &str = "Zoo Tycoon";
 
 type CliError = Box<dyn std::error::Error>;
 
+/// The log file, opened by `log_file_start` before anything else runs. `None` when it could not
+/// be opened: logcat still works, the file is a bonus, never a requirement.
+static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+
+/// `<external files dir>/rustyzoo.log`, beside the `Zoo Tycoon` data folder, so a file manager
+/// that can reach the game data can reach this too.
+fn log_path() -> Option<PathBuf> {
+    data_dir().parent().map(|dir| dir.join("rustyzoo.log"))
+}
+
+/// Open the log file for writing and record panics in it. Called first in `SDL_main`: when the
+/// app dies on start-up the file has to exist already, and on a device nobody can reach with
+/// `adb` reading it afterwards is the only way to know what happened. The file is truncated, so
+/// it holds the last run only -- that is the one worth sending back.
+fn log_file_start() {
+    let Some(path) = log_path() else {
+        log::error("log: no log path");
+        return;
+    };
+    match OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+    {
+        Ok(file) => {
+            *LOG_FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(file);
+            log::info(&format!("log: file {}", path.display()));
+        }
+        Err(e) => log::error(&format!("log: {}: {e}", path.display())),
+    }
+    // The default hook writes to stderr, which Android discards, so a panic leaves nothing
+    // behind. Keep the default behaviour and add the file.
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let what = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("panic");
+        let at = info
+            .location()
+            .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_string();
+        log::error(&format!("panic: {what}{at} (thread {thread})"));
+        previous(info);
+    }));
+}
+
 /// Android discards a native process's stderr, so `eprintln!` never reaches logcat and a
 /// failure inside `run` is invisible. Route diagnostics through the platform log instead,
-/// where `adb logcat -s rustyzoo` shows them.
+/// where `adb logcat -s rustyzoo` shows them, and mirror every line into the log file.
 mod log {
+    use std::io::Write;
+
     const ANDROID_LOG_ERROR: i32 = 6;
     const ANDROID_LOG_INFO: i32 = 4;
 
@@ -55,6 +112,14 @@ mod log {
         unsafe {
             __android_log_write(prio, tag.as_ptr(), text.as_ptr());
         }
+        // Flushed per line: a native crash takes the process with it and anything still
+        // buffered is gone, and the file is the only log a device without `adb` gives back.
+        if let Ok(mut file) = super::LOG_FILE.lock()
+            && let Some(file) = file.as_mut()
+        {
+            let _ = writeln!(file, "{msg}");
+            let _ = file.flush();
+        }
     }
 
     pub fn error(msg: &str) {
@@ -69,6 +134,7 @@ mod log {
 /// The entry point SDL calls on its own thread. Named `SDL_main` so the `sdl3-main` shim finds it.
 #[unsafe(no_mangle)]
 pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut std::ffi::c_char) -> i32 {
+    log_file_start();
     log::info("SDL_main: start");
     match run() {
         Ok(()) => {
@@ -115,6 +181,11 @@ fn run() -> Result<(), CliError> {
     let display = video.get_primary_display()?;
     let bounds = display.get_bounds()?;
     let density = display.get_mode().map_or(1.0, |m| m.pixel_density);
+    log::info(&format!(
+        "run: display bounds {}x{}, density {density}",
+        bounds.width(),
+        bounds.height()
+    ));
     let game = game_size(&ini, bounds.width(), bounds.height(), density);
     log::info(&format!("run: game size {}x{}", game.0, game.1));
 
@@ -123,7 +194,11 @@ fn run() -> Result<(), CliError> {
     let textures = canvas.texture_creator();
     let mut texture = textures.create_texture_streaming(PixelFormat::RGBA32, game.0, game.1)?;
     texture.set_scale_mode(ScaleMode::Nearest);
-    log::info("run: window and renderer up");
+    let pixels = canvas.window().size_in_pixels();
+    log::info(&format!(
+        "run: window and renderer up, {}x{} pixels",
+        pixels.0, pixels.1
+    ));
 
     // The start-up picture with its progress bar while the game data loads, then the main
     // menu. This is `boot::boot` of the window shell, which lives in the binary crate: the
@@ -191,7 +266,7 @@ fn run() -> Result<(), CliError> {
     log::info("run: main menu up, entering loop");
 
     let mut pump = sdl.event_pump()?;
-    let mut touch = Touch::new(game, canvas.window().size_in_pixels());
+    let mut touch = Touch::new(game, pixels);
     let mut commands = Vec::new();
     let start = sdl3::timer::ticks();
 
